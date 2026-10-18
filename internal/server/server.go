@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -107,7 +108,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		"defaultDownloadDir": s.defaultDir,
 		"hasScript":          fileExists(scriptPath),
 		"scriptPath":         scriptPath,
-		"version":            "1.3.1",
+		"version":            "1.3.2",
 		"appName":            "风宝音乐下载器",
 	}
 	writeJSON(w, resp)
@@ -239,10 +240,14 @@ func (s *Server) currentScriptPath() string {
 }
 
 func (s *Server) handleLyric(w http.ResponseWriter, r *http.Request) {
-	source := r.URL.Query().Get("source")
-	songmid := r.URL.Query().Get("songmid")
-	title := r.URL.Query().Get("title")
-	singer := r.URL.Query().Get("singer")
+	source := strings.TrimSpace(r.URL.Query().Get("source"))
+	songmid := strings.TrimSpace(r.URL.Query().Get("songmid"))
+	title := strings.TrimSpace(r.URL.Query().Get("title"))
+	singer := strings.TrimSpace(r.URL.Query().Get("singer"))
+	if songmid == "" && title == "" {
+		http.Error(w, "缺少 title 或 songmid，无法获取歌词", http.StatusBadRequest)
+		return
+	}
 	lrc := downloader.FetchLyric(source, songmid, title, singer)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -297,13 +302,50 @@ func (s *Server) handleOpenFolder(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 	var req downloader.DownloadRequest
-	bodyBytes, err := io.ReadAll(r.Body)
+	bodyBytes, err := io.ReadAll(io.LimitReader(r.Body, 8<<20))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	if err := json.Unmarshal(bodyBytes, &req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// 基础参数校验，避免空任务 / 空 URL / 非法格式写入任务表
+	req.URL = strings.TrimSpace(req.URL)
+	if req.URL == "" {
+		http.Error(w, "缺少音频直链 url", http.StatusBadRequest)
+		return
+	}
+	parsedURL, err := url.Parse(req.URL)
+	if err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") || parsedURL.Host == "" {
+		http.Error(w, "音频直链格式不正确，仅支持 http/https", http.StatusBadRequest)
+		return
+	}
+
+	req.Format = strings.ToLower(strings.TrimSpace(req.Format))
+	if req.Format == "" {
+		req.Format = "mp3"
+	}
+	if req.Format != "mp3" && req.Format != "flac" {
+		http.Error(w, "不支持的音频格式，仅支持 mp3 / flac", http.StatusBadRequest)
+		return
+	}
+
+	req.FileName = strings.TrimSpace(req.FileName)
+	if req.FileName == "" {
+		parts := make([]string, 0, 2)
+		if singer := strings.TrimSpace(req.Singer); singer != "" {
+			parts = append(parts, singer)
+		}
+		if title := strings.TrimSpace(req.Title); title != "" {
+			parts = append(parts, title)
+		}
+		req.FileName = strings.Join(parts, " - ")
+	}
+	if req.FileName == "" || strings.Trim(req.FileName, ". ") == "" {
+		http.Error(w, "缺少有效文件名（fileName 或 title / singer）", http.StatusBadRequest)
 		return
 	}
 
@@ -326,6 +368,12 @@ func (s *Server) handleCancelTask(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	body.ID = strings.TrimSpace(body.ID)
+	if body.ID == "" {
+		http.Error(w, "缺少任务 id", http.StatusBadRequest)
 		return
 	}
 

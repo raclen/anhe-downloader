@@ -223,8 +223,13 @@ export const App: React.FC = () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id })
     })
-      .then(() => {
-        message.info('任务已取消');
+      .then(async (res) => {
+        const data = await res.json().catch(() => ({}));
+        if (data.success) {
+          message.info('任务已取消');
+        } else {
+          message.warning('任务已结束或正在收尾，无法取消');
+        }
         fetchTasks();
       })
       .catch(() => {});

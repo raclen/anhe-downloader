@@ -16,7 +16,7 @@
 ```json
 {
   "appName": "风宝音乐下载器",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "defaultDownloadDir": "C:\\Users\\<user>\\Music\\AnHeMusic",
   "hasScript": true,
   "scriptPath": "custom-source.js"
@@ -34,7 +34,7 @@
 | `keyword` | 是 | 歌名 / 歌手 / 专辑 |
 | `source` | 否 | `all`（默认）/ `tx` / `kg` / `kw` / `wy` |
 | `page` | 否 | 页码，默认 1 |
-| `pagesize` | 否 | 每页数量，默认 30，最大 100 |
+| `pagesize` | 否 | 每页数量，默认 30，最大 100；`all` 模式也按该值截断 |
 
 响应：
 
@@ -70,9 +70,9 @@ curl "http://127.0.0.1:45678/api/search?keyword=%E6%99%B4%E5%A4%A9&source=tx&pag
 | 参数 | 必填 | 说明 |
 | --- | --- | --- |
 | `source` | 否 | 平台标识 |
-| `songmid` | 否 | 平台歌曲 ID / Hash |
-| `title` | 是 | 歌名（跨源匹配用） |
-| `singer` | 是 | 歌手（跨源匹配用） |
+| `songmid` | 否 | 平台歌曲 ID / Hash；与 `title` 至少提供一个 |
+| `title` | 否 | 歌名（跨源匹配用）；与 `songmid` 至少提供一个 |
+| `singer` | 否 | 歌手（跨源匹配用，建议提供） |
 | `quality` | 否 | `128k` / `320k` / `flac`，默认 320k |
 
 成功响应：
@@ -92,6 +92,8 @@ curl "http://127.0.0.1:45678/api/search?keyword=%E6%99%B4%E5%A4%A9&source=tx&pag
 《晴天》暂无可下载的完整音源（VIP / 付费或版权限制），可换其他版本试试
 ```
 
+缺少 `title` 与 `songmid` 时返回 HTTP 400。
+
 ---
 
 ## GET /api/lyric
@@ -101,13 +103,15 @@ curl "http://127.0.0.1:45678/api/search?keyword=%E6%99%B4%E5%A4%A9&source=tx&pag
 | 参数 | 必填 | 说明 |
 | --- | --- | --- |
 | `source` | 否 | 平台标识 |
-| `songmid` | 否 | 平台歌曲 ID |
-| `title` | 是 | 歌名 |
-| `singer` | 是 | 歌手 |
+| `songmid` | 否 | 平台歌曲 ID；与 `title` 至少提供一个 |
+| `title` | 否 | 歌名；与 `songmid` 至少提供一个 |
+| `singer` | 否 | 歌手（按歌名检索时建议提供） |
 
 ```json
 { "lyric": "[00:00.00]晴天 - 周杰伦\n[00:02.25]词：周杰伦\n..." }
 ```
+
+缺少 `title` 与 `songmid` 时返回 HTTP 400。
 
 ---
 
@@ -138,10 +142,27 @@ curl "http://127.0.0.1:45678/api/search?keyword=%E6%99%B4%E5%A4%A9&source=tx&pag
 
 | 字段 | 说明 |
 | --- | --- |
-| `format` | `mp3` / `flac`，决定扩展名与标签写入方式 |
+| `taskId` | 可选；缺省或重复时由服务端生成唯一 ID |
+| `url` | 必填，仅支持 `http` / `https` 直链 |
+| `fileName` | 可选；缺省时使用 `singer - title`，仍为空则返回 400 |
+| `format` | `mp3` / `flac`，缺省为 `mp3`，决定扩展名与标签写入方式 |
 | `embedCover` | 写入 `APIC` / FLAC Picture |
 | `embedLyrics` | 写入 `USLT` + `SYLT` / Vorbis Comment |
 | `saveLrcFile` | 额外生成同名 `.lrc` |
+
+参数校验失败（缺 `url`、非 http/https、非法 `format`、无可用户文件名）返回 HTTP 400。
+
+响应中的任务对象使用 `id` 字段（不是 `taskId`）：
+
+```json
+{
+  "id": "task_1750000000000_ab12",
+  "title": "晴天",
+  "status": "pending",
+  "progress": 0,
+  "savePath": "C:\\Users\\<user>\\Music\\AnHeMusic\\周杰伦 - 晴天.mp3"
+}
+```
 
 ---
 
@@ -180,7 +201,9 @@ curl "http://127.0.0.1:45678/api/search?keyword=%E6%99%B4%E5%A4%A9&source=tx&pag
 { "id": "task_1750000000000_ab12" }
 ```
 
-响应：`{ "success": true }`。取消后会删除 `.downloading` 临时文件。
+响应：`{ "success": true }`。取消后任务状态变为 `paused`，并删除 `.downloading` 临时文件。
+
+仅 `pending` / `downloading` 状态的任务可取消；任务已完成或正在写入标签时返回 `{ "success": false }`。缺少 `id` 时返回 HTTP 400。
 
 ---
 

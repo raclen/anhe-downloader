@@ -433,6 +433,12 @@ func searchAllSources(keyword string, page, pageSize int) ([]SearchSong, int) {
 	}()
 
 	wg.Wait()
+
+	// 聚合结果按请求的 pagesize 截断，保持与单源搜索一致的分页语义
+	if pageSize > 0 && len(allSongs) > pageSize {
+		allSongs = allSongs[:pageSize]
+	}
+
 	return allSongs, len(allSongs)
 }
 

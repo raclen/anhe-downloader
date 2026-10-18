@@ -2,6 +2,9 @@ package downloader
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -71,6 +74,16 @@ type TaskInfo struct {
 	lastTime   time.Time
 }
 
+// errTaskCancelled 标记用户主动取消，用于与网络异常区分
+var errTaskCancelled = errors.New("任务已终止")
+
+// newTaskID 生成服务端兜底任务 ID
+func newTaskID() string {
+	var b [4]byte
+	_, _ = rand.Read(b[:])
+	return fmt.Sprintf("task_%d_%s", time.Now().UnixMilli(), hex.EncodeToString(b[:]))
+}
+
 type Engine struct {
 	mu         sync.RWMutex
 	tasks      map[string]*TaskInfo
@@ -105,6 +118,23 @@ func NewEngine(maxConcurrent int) *Engine {
 func (e *Engine) Enqueue(req *DownloadRequest) *TaskInfo {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+
+	// 规范化输出格式；服务端兜底生成任务 ID，避免空 ID 任务互相覆盖
+	req.Format = strings.ToLower(strings.TrimSpace(req.Format))
+	if req.Format == "" {
+		req.Format = "mp3"
+	}
+	if strings.TrimSpace(req.TaskID) == "" || e.tasks[req.TaskID] != nil {
+		req.TaskID = newTaskID()
+	}
+
+	// 文件名兜底，避免 savePath 退化成目录本身
+	if strings.TrimSpace(req.FileName) == "" {
+		req.FileName = strings.TrimSpace(req.Singer + " - " + req.Title)
+		if req.FileName == "-" {
+			req.FileName = "未命名"
+		}
+	}
 
 	// 格式化输出文件路径
 	ext := "." + req.Format
@@ -152,15 +182,25 @@ func (e *Engine) CancelTask(id string) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	if t, ok := e.tasks[id]; ok {
-		if t.cancelFunc != nil {
-			t.cancelFunc()
-		}
-		t.Status = StatusPaused
-		t.Speed = "已取消"
-		return true
+	t, ok := e.tasks[id]
+	if !ok {
+		return false
 	}
-	return false
+
+	// 仅排队中或下载中的任务可取消；标签写入阶段无法安全中断
+	if t.Status != StatusPending && t.Status != StatusDownloading {
+		return false
+	}
+
+	t.ErrorMsg = ""
+	t.Speed = "已取消"
+	// 排队中的任务不会进入 worker；下载中的任务交给 processDownload 清理完后置为 paused
+	if t.Status == StatusPending {
+		t.Status = StatusPaused
+	} else if t.cancelFunc != nil {
+		t.cancelFunc()
+	}
+	return true
 }
 
 func (e *Engine) worker() {
@@ -171,12 +211,17 @@ func (e *Engine) worker() {
 
 func (e *Engine) processDownload(req *DownloadRequest) {
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	e.mu.Lock()
 	task, exists := e.tasks[req.TaskID]
 	if !exists {
 		e.mu.Unlock()
-		cancel()
+		return
+	}
+	// 排队期间已被取消，直接跳过
+	if task.Status != StatusPending {
+		e.mu.Unlock()
 		return
 	}
 	task.cancelFunc = cancel
@@ -186,9 +231,24 @@ func (e *Engine) processDownload(req *DownloadRequest) {
 	err := e.downloadFile(ctx, req, task)
 	if err != nil {
 		e.mu.Lock()
-		task.Status = StatusError
-		task.ErrorMsg = err.Error()
-		task.Speed = "下载失败"
+		if errors.Is(err, errTaskCancelled) {
+			task.Status = StatusPaused
+			task.Speed = "已取消"
+			task.ErrorMsg = ""
+		} else {
+			task.Status = StatusError
+			task.ErrorMsg = err.Error()
+			task.Speed = "下载失败"
+		}
+		e.mu.Unlock()
+		return
+	}
+
+	// 下载完成但用户已取消：不再写标签
+	if ctx.Err() != nil {
+		e.mu.Lock()
+		task.Status = StatusPaused
+		task.Speed = "已取消"
 		e.mu.Unlock()
 		return
 	}
@@ -216,7 +276,14 @@ func (e *Engine) downloadFile(ctx context.Context, req *DownloadRequest, task *T
 	if err != nil {
 		return fmt.Errorf("创建文件失败: %w", err)
 	}
-	defer out.Close()
+	// 无论成功、失败还是取消，都关闭文件句柄；未成功时删除临时文件
+	success := false
+	defer func() {
+		_ = out.Close()
+		if !success {
+			_ = os.Remove(tmpPath)
+		}
+	}()
 
 	httpReq, err := http.NewRequestWithContext(ctx, "GET", req.URL, nil)
 	if err != nil {
@@ -242,12 +309,8 @@ func (e *Engine) downloadFile(ctx context.Context, req *DownloadRequest, task *T
 	var downloaded int64
 
 	for {
-		select {
-		case <-ctx.Done():
-			_ = out.Close()
-			_ = os.Remove(tmpPath)
-			return fmt.Errorf("任务已终止")
-		default:
+		if ctx.Err() != nil {
+			return errTaskCancelled
 		}
 
 		n, readErr := resp.Body.Read(buf)
@@ -271,17 +334,28 @@ func (e *Engine) downloadFile(ctx context.Context, req *DownloadRequest, task *T
 			if readErr == io.EOF {
 				break
 			}
+			// Read 被取消时通常返回 context canceled，统一归类为主动取消
+			if ctx.Err() != nil {
+				return errTaskCancelled
+			}
 			return fmt.Errorf("流读取异常: %w", readErr)
 		}
 	}
 
-	_ = out.Close()
+	if ctx.Err() != nil {
+		return errTaskCancelled
+	}
+
+	if err := out.Close(); err != nil {
+		return fmt.Errorf("关闭临时文件失败: %w", err)
+	}
 
 	// 移除可能存在的已有文件，原子重命名完成
 	_ = os.Remove(task.SavePath)
 	if err := os.Rename(tmpPath, task.SavePath); err != nil {
 		return fmt.Errorf("重命名目标文件失败: %w", err)
 	}
+	success = true
 
 	return nil
 }

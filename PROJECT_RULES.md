@@ -30,6 +30,15 @@
 - QQ 搜索：`https://c.y.qq.com/soso/fcgi-bin/client_search_cp?p=&n=&w=&format=json&cr=1&t=0&aggr=1&lossless=0&catZhida=1&new_json=1`，需 `Referer: https://y.qq.com/`。注意 `file.size_128mp3/size_320mp3/size_flac` 是**数字**，别声明成 string。
 - QQ 歌词：`https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg?songmid=&format=json&nobase64=0&g_tk=5381`，返回 base64。
 - QQ 封面：`https://y.qq.com/music/photo_new/T002R500x500M000<album.mid>.jpg`。
+- 酷我封面：`hts_MVPIC` 是 MV 截图（可能是 324×183），必须优先用 `web_albumpic_short` 专辑封面并升级到 500×500。
+
+## 下载任务与取消（2026-10 冒烟测试修复）
+
+- `/api/download` 必须校验 `url`（仅 http/https）、`format`（mp3/flac）、`fileName`（缺省用 `singer - title`，仍为空则 400）；`taskId` 缺省或重复时由服务端生成，**禁止空 ID 入任务表**，否则多个任务会互相覆盖。
+- 取消下载时 `resp.Body.Read` 会返回 `context canceled`，必须统一归类为 `errTaskCancelled`，不能当网络错误写 `error`。
+- `downloadFile` 用 `defer` 在未成功时删除 `.downloading` 临时文件；`processDownload` 仅在任务仍为 `pending` 时启动，避免排队期取消后又开跑。
+- 仅 `pending` / `downloading` 可取消；`tagging` / `completed` / `error` 返回 `success:false`，前端按返回值提示。
+- `source=all` 聚合结果必须按 `pagesize` 截断，否则 `pagesize` 参数形同虚设。
 
 ## 验证清单
 

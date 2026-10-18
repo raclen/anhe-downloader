@@ -369,13 +369,15 @@ func detectURLFormat(rawURL string) string {
 // handleResolve HTTP 入口
 func (s *Server) handleResolve(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	result, err := resolveAudio(
-		strings.TrimSpace(q.Get("source")),
-		strings.TrimSpace(q.Get("songmid")),
-		strings.TrimSpace(q.Get("title")),
-		strings.TrimSpace(q.Get("singer")),
-		q.Get("quality"),
-	)
+	source := strings.TrimSpace(q.Get("source"))
+	songmid := strings.TrimSpace(q.Get("songmid"))
+	title := strings.TrimSpace(q.Get("title"))
+	singer := strings.TrimSpace(q.Get("singer"))
+	if songmid == "" && title == "" {
+		http.Error(w, "缺少 title 或 songmid，无法解析音源", http.StatusBadRequest)
+		return
+	}
+	result, err := resolveAudio(source, songmid, title, singer, q.Get("quality"))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return

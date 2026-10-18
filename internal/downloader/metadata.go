@@ -381,11 +381,12 @@ func searchKuWoCover(keyword string) string {
 	}
 
 	item := res.AbsList[0]
-	if item.HtsMVPIC != "" {
-		return item.HtsMVPIC
-	}
+	// 优先专辑封面（方形，可自动升级为 500×500）；hts_MVPIC 是 MV 截图，仅作兜底
 	if item.WebAlbumPicShort != "" {
 		return "https://img4.kuwo.cn/star/albumcover/" + item.WebAlbumPicShort
+	}
+	if item.HtsMVPIC != "" {
+		return item.HtsMVPIC
 	}
 	return ""
 }
