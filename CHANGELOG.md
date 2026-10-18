@@ -2,6 +2,18 @@
 
 本项目遵循语义化版本。日期格式为 `YYYY-MM-DD`。
 
+## [Unreleased]
+
+### 文档
+
+- 文档重构为多页结构：`README.md` 作为落地页，新增 `docs/USAGE.md`、`docs/BUILD.md`、`docs/API.md`、`docs/FAQ.md`。
+- 新增界面截图 `docs/screenshot-home.png`，补充本地 API 参数、响应与错误约定。
+- `PROJECT_RULES.md` 更新文档分工与 ID3v2.3 相关约束。
+
+### 开发
+
+- Vite 开发服务器新增 `/api` 代理，`pnpm dev` 可直接联调后端。
+
 ## [1.3.0] - 2026-10-18
 
 首个公开版本。

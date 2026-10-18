@@ -48,7 +48,7 @@
 
 - 公开仓库不包含第三方音源脚本（`长青*.js` / `*.protected.js` 已在 `.gitignore`），也不提交 `custom-source.js`、`anhe-downloader.exe` 与 `temp/`。
 - `frontend/dist` 会提交，保证克隆后可直接 `go build`；改前端后务必重新 `pnpm build` 并一起提交。
-- 文档分工：`README.md` 面向使用者，`CHANGELOG.md` 记录版本变更，`PROJECT_RULES.md` 记录开发约束与接口备忘。
+- 文档分工：`README.md` 作为落地页；`docs/USAGE.md` 使用指南、`docs/BUILD.md` 构建开发、`docs/API.md` 接口说明、`docs/FAQ.md` 常见问题；`CHANGELOG.md` 记录版本变更；`PROJECT_RULES.md` 记录开发约束与接口备忘。
 - 提交信息使用中文，格式建议：`feat: ...` / `fix: ...` / `docs: ...` / `chore: ...`。
 - 发布前检查：`go build ./...`、`cd frontend && pnpm build`、`ffprobe` 验证时长、`mutagen` 验证 `USLT/SYLT/APIC`。
 
