@@ -166,9 +166,13 @@ func searchKuWo(keyword string, page, pageSize int) ([]SearchSong, int, error) {
 			types = append(types, "flac")
 		}
 
-		cover := item.HtsMVPIC
+		cover := strings.Replace(item.HtsMVPIC, "/star/albumcover/120/", "/star/albumcover/500/", 1)
 		if cover == "" && item.WebAlbumPicShort != "" {
+			// web_albumpic_short 形如 "120/s4s70/24/xxx.jpg"，只替换尺寸段
 			cover = fmt.Sprintf("https://img4.kuwo.cn/star/albumcover/%s", item.WebAlbumPicShort)
+			cover = strings.Replace(cover, "/star/albumcover/120/", "/star/albumcover/500/", 1)
+			cover = strings.Replace(cover, "/star/albumcover/240/", "/star/albumcover/500/", 1)
+			cover = strings.Replace(cover, "/star/albumcover/300/", "/star/albumcover/500/", 1)
 		}
 
 		list = append(list, SearchSong{

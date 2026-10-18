@@ -2,13 +2,10 @@ package downloader
 
 import (
 	"encoding/binary"
-	"io"
 	"regexp"
 	"strconv"
 	"strings"
 	"unicode/utf16"
-
-	"github.com/bogem/id3v2/v2"
 )
 
 // lrcTimeTag 匹配 LRC 时间标签，如 [01:23.45] / [01:23.456] / [01:23]
@@ -20,23 +17,6 @@ var lrcWordTag = regexp.MustCompile(`<\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?>`)
 type syltText struct {
 	Text string
 	Time uint32 // 毫秒
-}
-
-// syltFrame ID3v2 SYLT（同步歌词）帧，用于让播放器按时间轴滚动显示内嵌歌词
-type syltFrame struct {
-	Language string
-	Texts    []syltText
-	body     []byte
-}
-
-func newSyltFrame(lrc string) *syltFrame {
-	texts := parseLRCTexts(lrc)
-	if len(texts) == 0 {
-		return nil
-	}
-	f := &syltFrame{Language: "chi", Texts: texts}
-	f.body = f.build()
-	return f
 }
 
 // parseLRCTexts 解析 LRC 为 (时间, 文本) 列表
@@ -74,24 +54,23 @@ func parseLRCTexts(lrc string) []syltText {
 	return out
 }
 
-func (f *syltFrame) build() []byte {
-	buf := make([]byte, 0, 256)
-	// 文本编码：UTF-16 with BOM（v2.3/v2.4 通用）
-	buf = append(buf, 0x01)
-	lang := f.Language
-	if len(lang) != 3 {
-		lang = "chi"
+// buildSyltBody 构建 ID3v2.3 SYLT 帧体：
+// 文本编码(UTF-16) + 语言 + 时间戳格式(毫秒) + 内容类型(歌词) + 描述 + (文本, 时间戳)*
+func buildSyltBody(lrc string) []byte {
+	texts := parseLRCTexts(lrc)
+	if len(texts) == 0 {
+		return nil
 	}
-	buf = append(buf, []byte(strings.ToLower(lang))...)
-	// 时间戳格式：0x02 = 毫秒
-	buf = append(buf, 0x02)
-	// 内容类型：0x01 = 歌词
-	buf = append(buf, 0x01)
-	// 描述信息（空字符串，UTF-16 BOM + 终止符）
-	buf = append(buf, 0xFF, 0xFE, 0x00, 0x00)
 
-	for _, item := range f.Texts {
-		buf = appendUTF16(buf, item.Text)
+	buf := make([]byte, 0, 256)
+	buf = append(buf, 0x01)                   // UTF-16 with BOM
+	buf = append(buf, []byte("chi")...)       // 语言
+	buf = append(buf, 0x02)                   // 时间戳格式：毫秒
+	buf = append(buf, 0x01)                   // 内容类型：歌词
+	buf = append(buf, 0xFF, 0xFE, 0x00, 0x00) // 空描述
+
+	for _, item := range texts {
+		buf = appendUTF16String(buf, item.Text)
 		var ts [4]byte
 		binary.BigEndian.PutUint32(ts[:], item.Time)
 		buf = append(buf, ts[:]...)
@@ -99,41 +78,12 @@ func (f *syltFrame) build() []byte {
 	return buf
 }
 
-func appendUTF16(buf []byte, s string) []byte {
-	// 每个字符串单独带 BOM，兼容各播放器解析
+// appendUTF16String 追加带 BOM 和双字节终止符的 UTF-16LE 字符串
+func appendUTF16String(buf []byte, s string) []byte {
 	buf = append(buf, 0xFF, 0xFE)
 	for _, u := range utf16.Encode([]rune(s)) {
 		buf = append(buf, byte(u), byte(u>>8))
 	}
 	buf = append(buf, 0x00, 0x00)
 	return buf
-}
-
-func (f *syltFrame) Size() int {
-	return len(f.body)
-}
-
-func (f *syltFrame) UniqueIdentifier() string {
-	return ""
-}
-
-func (f *syltFrame) WriteTo(w io.Writer) (int64, error) {
-	n, err := w.Write(f.body)
-	return int64(n), err
-}
-
-// addLyricsFrames 同时写入 USLT（非同步歌词）与 SYLT（同步歌词），最大化播放器兼容性
-func addLyricsFrames(tag *id3v2.Tag, lrc string) {
-	tag.DeleteFrames("USLT")
-	tag.AddUnsynchronisedLyricsFrame(id3v2.UnsynchronisedLyricsFrame{
-		Encoding:          id3v2.EncodingUTF16,
-		Language:          "chi",
-		ContentDescriptor: "",
-		Lyrics:            lrc,
-	})
-
-	if sylt := newSyltFrame(lrc); sylt != nil {
-		tag.DeleteFrames("SYLT")
-		tag.AddFrame("SYLT", sylt)
-	}
 }

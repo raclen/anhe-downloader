@@ -51,7 +51,7 @@
 - 先写 `.downloading` 临时文件，完成后原子重命名，异常退出不产生半损坏文件。
 
 ### 🏷️ 单文件 MP3（封面 + 歌词）
-- MP3：ID3v2 `TIT2` / `TPE1` / `TALB` + `USLT`（非同步歌词）+ `SYLT`（同步滚动歌词）+ `APIC`（前置封面）；
+- MP3：**ID3v2.3** `TIT2` / `TPE1` / `TALB` + `USLT`（非同步歌词）+ `SYLT`（同步滚动歌词）+ `APIC`（500×500 前置封面）；
 - FLAC：Vorbis Comment（`LYRICS` / `UNSYNCEDLYRICS`）+ Picture Block 封面；
 - `.lrc` 独立文件**默认关闭**，需要兼容老式车载播放器时可在设置中开启。
 
@@ -105,6 +105,7 @@ anhe-downloader/
 │   ├── downloader/
 │   │   ├── downloader.go         # 下载引擎、并发调度、ID3v2 / FLAC 元数据写入
 │   │   ├── metadata.go           # 多平台歌词与封面抓取（含 QQ 音乐歌词接口）
+│   │   ├── id3v23.go             # 自研 ID3v2.3 标签写入（Windows / 车载播放器兼容）
 │   │   └── sylt.go               # LRC 解析与 ID3v2 SYLT 同步歌词帧
 │   └── server/
 │       ├── server.go             # HTTP API、目录选择、任务与音源脚本管理
@@ -260,7 +261,6 @@ QQ 官方接口对免费曲目只提供 m4a，对 VIP 曲目需要登录凭证�
 
 - [LX Music Desktop（洛雪音乐助手）](https://github.com/lyswhut/lx-music-desktop)
 - [go-webview2](https://github.com/jchv/go-webview2)
-- [bogem/id3v2](https://github.com/bogem/id3v2)
 - [go-flac](https://github.com/go-flac/go-flac)
 - [OuterTune](https://github.com/OuterTune/OuterTune)
 

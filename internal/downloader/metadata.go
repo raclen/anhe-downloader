@@ -80,15 +80,49 @@ func FetchLyric(source, songmid, title, singer string) string {
 	return ""
 }
 
-// FetchCoverBytes 获取封面二进制图片数据
+// kuwoCoverSizeRe 将酷我 120/240/300 的小图地址升级为 500x500 高清封面
+var kuwoCoverSizeRe = regexp.MustCompile(`(img\d*\.kuwo\.cn/star/albumcover)/(?:120|240|300)(/)`)
+
+func upgradeCoverURL(raw string) string {
+	raw = strings.ReplaceAll(raw, "{size}", "400")
+	raw = kuwoCoverSizeRe.ReplaceAllString(raw, "$1/500$2")
+	return raw
+}
+
+// FetchCoverBytes 获取封面二进制图片数据（优先高清，且必须是可识别图片）
 func FetchCoverBytes(coverURL, source, songmid, title, singer string) []byte {
-	// 1. 若已有 coverURL，直接下载
-	if coverURL != "" {
-		if strings.HasPrefix(coverURL, "//") {
-			coverURL = "https:" + coverURL
+	var smaller []byte
+
+	try := func(raw string) []byte {
+		if strings.TrimSpace(raw) == "" {
+			return nil
 		}
-		if b := downloadImageBytes(coverURL); len(b) > 500 {
+		if strings.HasPrefix(raw, "//") {
+			raw = "https:" + raw
+		}
+		b := downloadImageBytes(upgradeCoverURL(raw))
+		if detectImageMime(b) == "" || len(b) < 1024 {
+			return nil
+		}
+		// 高清图直接采用，小图先存着继续找
+		if len(b) >= 8*1024 {
 			return b
+		}
+		if smaller == nil {
+			smaller = b
+		}
+		return nil
+	}
+
+	// 1. 优先使用搜索结果里的封面（自动升级到 500x500）
+	if coverURL != "" {
+		if b := try(coverURL); b != nil {
+			return b
+		}
+		if up := upgradeCoverURL(coverURL); up != coverURL {
+			if b := try(up); b != nil {
+				return b
+			}
 		}
 	}
 
@@ -97,31 +131,31 @@ func FetchCoverBytes(coverURL, source, songmid, title, singer string) []byte {
 	cleanSinger := sanitizeSearchWord(singer)
 	query := strings.TrimSpace(cleanTitle + " " + cleanSinger)
 	if query == "" {
-		return nil
+		return smaller
 	}
 
 	// 查酷狗
 	if cURL := searchKuGouCover(query); cURL != "" {
-		if b := downloadImageBytes(cURL); len(b) > 500 {
+		if b := try(cURL); b != nil {
 			return b
 		}
 	}
 
 	// 查酷我
 	if cURL := searchKuWoCover(query); cURL != "" {
-		if b := downloadImageBytes(cURL); len(b) > 500 {
+		if b := try(cURL); b != nil {
 			return b
 		}
 	}
 
 	// 查网易云
 	if cURL := searchNetEaseCover(query); cURL != "" {
-		if b := downloadImageBytes(cURL); len(b) > 500 {
+		if b := try(cURL); b != nil {
 			return b
 		}
 	}
 
-	return nil
+	return smaller
 }
 
 func downloadImageBytes(imgURL string) []byte {
@@ -130,7 +164,7 @@ func downloadImageBytes(imgURL string) []byte {
 		return nil
 	}
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-	req.Header.Set("Referer", "http://y.qq.com")
+	req.Header.Set("Referer", refererForURL(imgURL))
 
 	resp, err := metaClient.Do(req)
 	if err != nil || resp.StatusCode != http.StatusOK {
@@ -138,7 +172,7 @@ func downloadImageBytes(imgURL string) []byte {
 	}
 	defer resp.Body.Close()
 
-	b, _ := io.ReadAll(resp.Body)
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	return b
 }
 

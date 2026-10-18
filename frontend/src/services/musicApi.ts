@@ -143,6 +143,8 @@ export class MusicApi {
       const has320 = item.MINFO && item.MINFO.includes('bitrate:320');
       const coverUrl = item.web_albumpic_short
         ? `https://img4.kuwo.cn/star/albumcover/${item.web_albumpic_short}`
+            .replace('/120/', '/500/')
+            .replace('/240/', '/500/')
         : item.hts_MVPIC || '';
 
       const types: ('128k' | '320k' | 'flac')[] = ['128k'];

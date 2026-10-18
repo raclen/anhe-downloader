@@ -14,7 +14,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/bogem/id3v2/v2"
 	flacpicture "github.com/go-flac/flacpicture"
 	flacvorbis "github.com/go-flac/flacvorbis"
 	flac "github.com/go-flac/go-flac"
@@ -308,44 +307,10 @@ func (e *Engine) tagFile(req *DownloadRequest, filePath string) {
 	// 4. 根据扩展名处理 ID3 / FLAC 元数据
 	ext := strings.ToLower(filepath.Ext(filePath))
 	if ext == ".mp3" {
-		tag, err := id3v2.Open(filePath, id3v2.Options{Parse: true})
-		if err != nil {
-			// 少数音频自带损坏/非标准标签，退化为忽略旧标签重新写入
-			tag, err = id3v2.Open(filePath, id3v2.Options{Parse: false})
-		}
-		if err != nil {
-			log.Printf("MP3 标签写入失败（无法打开文件）: %s: %v", filePath, err)
-			return
-		}
-		defer tag.Close()
-
-		tag.SetDefaultEncoding(id3v2.EncodingUTF16)
-		tag.SetTitle(req.Title)
-		tag.SetArtist(req.Singer)
-		tag.SetAlbum(req.Album)
-
-		if req.EmbedLyrics && strings.TrimSpace(req.Lyric) != "" {
-			addLyricsFrames(tag, req.Lyric)
-		}
-
-		if len(coverBytes) > 0 {
-			tag.DeleteFrames("APIC")
-			mime := "image/jpeg"
-			if len(coverBytes) > 8 && coverBytes[0] == 0x89 && coverBytes[1] == 'P' && coverBytes[2] == 'N' && coverBytes[3] == 'G' {
-				mime = "image/png"
-			}
-			pic := id3v2.PictureFrame{
-				Encoding:    id3v2.EncodingUTF16,
-				MimeType:    mime,
-				PictureType: id3v2.PTFrontCover,
-				Description: "Front Cover",
-				Picture:     coverBytes,
-			}
-			tag.AddAttachedPicture(pic)
-		}
-
-		if err := tag.Save(); err != nil {
-			log.Printf("MP3 标签保存失败: %s: %v", filePath, err)
+		// 统一写 ID3v2.3：Windows 与大多数车载/国产播放器不识别 v2.4 的封面帧
+		tagBytes := buildID3v23Tag(req, coverBytes)
+		if err := writeMP3WithTag(filePath, tagBytes); err != nil {
+			log.Printf("MP3 标签写入失败: %s: %v", filePath, err)
 		}
 	} else if ext == ".flac" {
 		f, err := flac.ParseFile(filePath)

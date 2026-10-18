@@ -51,3 +51,10 @@
 - 文档分工：`README.md` 面向使用者，`CHANGELOG.md` 记录版本变更，`PROJECT_RULES.md` 记录开发约束与接口备忘。
 - 提交信息使用中文，格式建议：`feat: ...` / `fix: ...` / `docs: ...` / `chore: ...`。
 - 发布前检查：`go build ./...`、`cd frontend && pnpm build`、`ffprobe` 验证时长、`mutagen` 验证 `USLT/SYLT/APIC`。
+
+## MP3 标签必须写 ID3v2.3
+
+- Windows 资源管理器、WMP、椒盐音乐以及大量车载播放器**不读 ID3v2.4 的 `APIC`**，只认 ID3v2.3。因此 MP3 标签由 `internal/downloader/id3v23.go` 自行构造，禁止改回第三方库的默认 v2.4 写法。
+- 旧库（bogem/id3v2）在 UTF-16 帧里会多写 NUL：`APIC` 图片数据前会出现 `0x00`，导致图片无法识别；`USLT` 也会乱码。自研写入器已规避。
+- 标签替换流程：剥离文件头已有 ID3v2 标签 → 写新标签 → `io.Copy` 音频 → 关闭源文件 → `rename`（Windows 需重试）。
+- 封面统一取 `500×500`，写入前用文件头校验 MIME；酷我 `120/240/300` 尺寸段自动替换为 `500`。
