@@ -1,0 +1,36 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Logs & temp
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+temp_downloads/
+temp/
+gittemp/
+custom-source.js
+custom-source.js.tmp
+# 第三方音源脚本不入库（避免公开扩散未授权脚本）
+长青*.js
+*.protected.js
+
+# OS specific
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDEs
+.vscode/
+.idea/
+*.suo
+*.user
