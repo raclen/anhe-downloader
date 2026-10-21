@@ -108,7 +108,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		"defaultDownloadDir": s.defaultDir,
 		"hasScript":          fileExists(scriptPath),
 		"scriptPath":         scriptPath,
-		"version":            "1.3.2",
+		"version":            "1.4.0",
 		"appName":            "风宝音乐下载器",
 	}
 	writeJSON(w, resp)

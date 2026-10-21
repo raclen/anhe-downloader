@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-10-21
+
+### 新增
+
+- **洛雪音源兼容层补全**：沙箱补齐 `lx.version`、`lx.env`、`lx.utils`（buffer / md5 / AES / randomBytes）与 `lx.currentScriptInfo`。flower、grass 等初始化阶段会读取脚本元信息的音源，不再报 `Cannot read properties of undefined (reading 'version')`。
+- **请求适配增强**：`lx.request` 补齐 `resp.body`、`form` / `formData` / `binary` 与超时处理，兼容更多第三方音源脚本。
+
 ### 文档
 
 - 文档重构为多页结构：`README.md` 作为落地页，新增 `docs/USAGE.md`、`docs/BUILD.md`、`docs/API.md`、`docs/FAQ.md`。

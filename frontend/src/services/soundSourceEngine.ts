@@ -1,3 +1,4 @@
+import CryptoJS from 'crypto-js';
 import { MusicQuality, MusicSource, SongEntity, SoundSourceMeta } from '../types/music';
 
 type RequestHandler = (params: {
@@ -20,6 +21,93 @@ export interface ResolvedAudio {
   format: 'mp3' | 'flac' | 'm4a';
   resolver: string;
 }
+
+/** 把各种输入统一转成字节数组（模拟 Node Buffer.from 的常用编码） */
+function toBytes(data: any, encoding?: string): Uint8Array {
+  if (typeof data === 'string') {
+    const enc = (encoding || 'utf8').toLowerCase();
+    if (enc === 'base64') {
+      const binary = atob(data);
+      return Uint8Array.from(binary, (c) => c.charCodeAt(0));
+    }
+    if (enc === 'hex') {
+      const bytes: number[] = [];
+      for (let i = 0; i + 1 < data.length; i += 2) bytes.push(parseInt(data.slice(i, i + 2), 16));
+      return Uint8Array.from(bytes);
+    }
+    return new TextEncoder().encode(data);
+  }
+  if (data instanceof Uint8Array) return data;
+  if (data instanceof ArrayBuffer) return new Uint8Array(data);
+  if (Array.isArray(data)) return Uint8Array.from(data);
+  if (data && typeof data === 'object' && data.buffer instanceof ArrayBuffer) {
+    return new Uint8Array(data.buffer, data.byteOffset || 0, data.byteLength ?? data.length ?? 0);
+  }
+  return new TextEncoder().encode(String(data));
+}
+
+/** 字节数组按指定编码转字符串（对应 Buffer#toString） */
+function bytesToString(bytes: Uint8Array, format?: string): string {
+  const fmt = (format || 'utf8').toLowerCase();
+  if (fmt === 'hex') return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  if (fmt === 'base64') {
+    let binary = '';
+    for (const b of bytes) binary += String.fromCharCode(b);
+    return btoa(binary);
+  }
+  return new TextDecoder().decode(bytes);
+}
+
+/** Uint8Array ↔ crypto-js WordArray */
+function bytesToWordArray(bytes: Uint8Array): any {
+  const words: number[] = [];
+  for (let i = 0; i < bytes.length; i++) words[i >>> 2] |= bytes[i] << (24 - (i % 4) * 8);
+  return CryptoJS.lib.WordArray.create(words as any, bytes.length);
+}
+
+function wordArrayToBytes(wordArray: any): Uint8Array {
+  const words: number[] = wordArray.words;
+  const { sigBytes } = wordArray;
+  const bytes = new Uint8Array(sigBytes);
+  for (let i = 0; i < sigBytes; i++) {
+    bytes[i] = (words[i >>> 2] >>> (24 - (i % 4) * 8)) & 0xff;
+  }
+  return bytes;
+}
+
+/** 洛雪 lx.utils 的浏览器兼容实现（crypto-js 提供同步的 MD5/AES） */
+const lxUtils = {
+  buffer: {
+    from: (data: any, encoding?: string) => toBytes(data, encoding),
+    bufToString: (buffer: any, format?: string) => bytesToString(toBytes(buffer), format),
+  },
+  crypto: {
+    md5: (value: any) => CryptoJS.MD5(bytesToWordArray(toBytes(value))).toString(CryptoJS.enc.Hex),
+    randomBytes: (size: number) => {
+      const bytes = new Uint8Array(size);
+      globalThis.crypto.getRandomValues(bytes);
+      return bytes;
+    },
+    aesEncrypt: (buffer: any, mode = 'aes-128-cbc', key: any, iv?: any) => {
+      const isEcb = /ecb/i.test(mode);
+      const config: any = {
+        mode: isEcb ? CryptoJS.mode.ECB : CryptoJS.mode.CBC,
+        // 与洛雪保持一致：不做自动填充，由音源自行补齐块大小
+        padding: CryptoJS.pad.NoPadding,
+      };
+      if (!isEcb) config.iv = bytesToWordArray(toBytes(iv ?? ''));
+      const encrypted = CryptoJS.AES.encrypt(
+        bytesToWordArray(toBytes(buffer)),
+        bytesToWordArray(toBytes(key)),
+        config,
+      );
+      return wordArrayToBytes(encrypted.ciphertext);
+    },
+    rsaEncrypt: () => {
+      throw new Error('当前运行环境不支持 utils.crypto.rsaEncrypt');
+    },
+  },
+};
 
 export class SoundSourceEngine {
   private static instance: SoundSourceEngine;
@@ -56,6 +144,7 @@ export class SoundSourceEngine {
       const versionMatch = code.match(/@version\s+([^\r\n]+)/);
       const authorMatch = code.match(/@author\s+([^\r\n]+)/);
       const descMatch = code.match(/@description\s+([^\r\n]+)/);
+      const homepageMatch = code.match(/@homepage\s+([^\r\n]+)/);
 
       this.meta.name = nameMatch ? nameMatch[1].trim() : '自定义音源';
       this.meta.version = versionMatch ? versionMatch[1].trim() : '1.0.0';
@@ -69,15 +158,56 @@ export class SoundSourceEngine {
           request: 'request',
           updateAlert: 'updateAlert'
         },
+        // 洛雪运行时版本与环境标识：部分音源据此判断是否启用 utils、以及拼接 User-Agent
+        version: '2.0.0',
+        env: 'desktop',
+        // 脚本元信息：flower/grass 等音源初始化时会直接读取 currentScriptInfo.version
+        currentScriptInfo: {
+          name: this.meta.name,
+          description: this.meta.description,
+          version: this.meta.version,
+          author: this.meta.author,
+          homepage: homepageMatch ? homepageMatch[1].trim() : undefined,
+          rawScript: code
+        },
+        utils: lxUtils,
         request: (url: string, options: any, callback: (err: any, resp: any, body: any) => void) => {
-          fetch(url, {
-            method: options?.method || 'GET',
-            headers: options?.headers,
-            body: options?.body
-          })
+          const headers = { ...(options?.headers || {}) };
+          const init: RequestInit = {
+            method: (options?.method || 'GET').toUpperCase(),
+            headers,
+            signal: options?.timeout > 0 ? AbortSignal.timeout(options.timeout) : undefined
+          };
+
+          if (options?.form) {
+            init.body = new URLSearchParams(options.form).toString();
+            if (!headers['content-type']) {
+              headers['content-type'] = 'application/x-www-form-urlencoded';
+            }
+          } else if (options?.formData) {
+            const fd = new FormData();
+            for (const [k, v] of Object.entries(options.formData)) fd.append(k, v as any);
+            init.body = fd;
+          } else if (options?.body != null) {
+            init.body =
+              typeof options.body === 'string' ? options.body : JSON.stringify(options.body);
+            if (typeof options.body === 'object' && !(options.body instanceof ArrayBuffer) && !headers['content-type']) {
+              headers['content-type'] = 'application/json';
+            }
+          }
+
+          fetch(url, init)
             .then(async (res) => {
-              const text = await res.text();
-              callback(null, { statusCode: res.status, headers: Object.fromEntries(res.headers) }, text);
+              const buf = new Uint8Array(await res.arrayBuffer());
+              let body: any = options?.binary ? buf : new TextDecoder().decode(buf);
+              if (!options?.binary) {
+                try {
+                  body = JSON.parse(body);
+                } catch {
+                  /* 非 JSON 响应保持字符串 */
+                }
+              }
+              callback(null, { statusCode: res.status, headers: Object.fromEntries(res.headers), body }, body);
             })
             .catch((err) => callback(err, null, null));
         },
@@ -98,13 +228,8 @@ export class SoundSourceEngine {
 
       // 在当前窗口上下文中执行
       const runner = new Function('globalThis', `
-        const oldLx = globalThis.lx;
         globalThis.lx = arguments[1];
-        try {
-          ${code}
-        } finally {
-          // preserve handler
-        }
+        ${code}
       `);
 
       runner(window, sandboxLx);
